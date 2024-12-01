@@ -229,6 +229,11 @@ IBackend* DrvOpenXR::CreateOpenXRBackend(const char* startupInfo)
 	if (availableExtensions.contains(XR_EXT_HP_MIXED_REALITY_CONTROLLER_EXTENSION_NAME))
 		extensions.push_back(XR_EXT_HP_MIXED_REALITY_CONTROLLER_EXTENSION_NAME);
 
+	if (availableExtensions.contains(XR_EXT_ACTIVE_ACTION_SET_PRIORITY_EXTENSION_NAME))
+		extensions.push_back(XR_EXT_ACTIVE_ACTION_SET_PRIORITY_EXTENSION_NAME);
+	else
+		OOVR_LOGF("WARNING: Extension XrActiveActionSetPriorityEXT not available, action set priorities won't work!");
+
 	const char* const layers[] = {
 #ifdef XR_VALIDATION_LAYER_PATH
 		"XR_APILAYER_LUNARG_core_validation",

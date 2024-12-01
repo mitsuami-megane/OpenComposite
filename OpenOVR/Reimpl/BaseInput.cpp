@@ -19,6 +19,7 @@
 #ifndef GLM_ENABLE_EXPERIMENTAL
 #define GLM_ENABLE_EXPERIMENTAL
 #endif
+#include <filesystem>
 #include <glm/gtc/matrix_inverse.hpp>
 #include <locale>
 #include <map>
@@ -27,7 +28,6 @@
 #include <optional>
 #include <set>
 #include <utility>
-#include <filesystem>
 
 #include "Misc/xrmoreutils.h"
 
@@ -542,6 +542,7 @@ EVRInputError BaseInput::SetActionManifestPath(const char* pchActionManifestPath
 
 	for (const std::unique_ptr<ActionSet>& as : actionSets.GetItems()) {
 		XrActionSetCreateInfo createInfo = { XR_TYPE_ACTION_SET_CREATE_INFO };
+		createInfo.priority = 1; // Make sure to override legacy actions
 		std::string safeName = escapePathString(as->name);
 		strcpy_arr(createInfo.actionSetName, safeName.c_str());
 		strcpy_arr(createInfo.localizedActionSetName, as->name.c_str()); // TODO localisation
@@ -617,7 +618,7 @@ EVRInputError BaseInput::SetActionManifestPath(const char* pchActionManifestPath
 		std::string controller_type = item["controller_type"].asString();
 		std::string path = dirnameOf(pchActionManifestPath) + "/" + item["binding_url"].asString();
 
-		//check if a custom binding file exists in current_dir/OpenComposite/controller_type.json
+		// check if a custom binding file exists in current_dir/OpenComposite/controller_type.json
 		std::filesystem::path customPath = std::filesystem::current_path() / "OpenComposite" / (controller_type + ".json");
 
 		if (std::filesystem::exists(customPath)) {
@@ -1209,29 +1210,27 @@ EVRInputError BaseInput::GetInputSourceHandle(const char* pchInputSourcePath, VR
 EVRInputError BaseInput::UpdateActionState(VR_ARRAY_COUNT(unSetCount) VRActiveActionSet_t* pSets,
     uint32_t unSizeOfVRSelectedActionSet_t, uint32_t unSetCount)
 {
-	// TODO if the game is using legacy input, call this every frame
-
 	OOVR_FALSE_ABORT(sizeof(*pSets) == unSizeOfVRSelectedActionSet_t);
 
-	// Make sure all the ActionSets have the same priority, since we don't have any way around that right now
-	if (unSetCount > 1) {
-		int priority = pSets[0].nPriority;
-		for (uint32_t i = 1; i < unSetCount; i++) {
-			if (pSets[i].nPriority != priority) {
-				ActionSet* as1 = cast_ASH(pSets[0].ulActionSet);
-				ActionSet* curAs = cast_ASH(pSets[1].ulActionSet);
-				OOVR_SOFT_ABORTF("Active action set %s (%d) and %s (%d) have different priorities, this is not yet supported",
-				    as1->fullName.c_str(), pSets[0].nPriority, curAs->fullName.c_str(), pSets[1].nPriority);
-			}
+	// SteamVR uses an int32, OpenXR a uint32
+	// not sure if it is strictly necessary, but if there is a negative priority, we just shift everything over
+	int minPriority = 0;
+	for (uint32_t i = 0; i < unSetCount; i++) {
+		if (pSets[i].nPriority < minPriority) {
+			minPriority = pSets[i].nPriority;
 		}
 	}
 
+	// +1 is to make sure legacy actions are always at a lower priority
+	int priorityOffset = (minPriority < 0) ? -minPriority + 1 : 1;
+
 	std::vector<XrActiveActionSet> aas(unSetCount + 1);
+	std::vector<XrActiveActionSetPriorityEXT> priorities(unSetCount + 1);
 
 	for (uint32_t i = 0; i < unSetCount; i++) {
 		VRActiveActionSet_t& set = pSets[i];
-
 		GET_ACTION_SET_FROM_HANDLE(as, set.ulActionSet);
+
 		aas[i].actionSet = as->xr;
 
 		if (set.ulRestrictedToDevice != vr::k_ulInvalidInputValueHandle) {
@@ -1241,14 +1240,25 @@ EVRInputError BaseInput::UpdateActionState(VR_ARRAY_COUNT(unSetCount) VRActiveAc
 				aas[i].subactionPath = ctrl.handPathXr;
 			}
 		}
+
+		priorities[i].actionSet = as->xr;
+		priorities[i].priorityOverride = set.nPriority + priorityOffset;
 	}
 
-	// Ad the last set, the legacy input set
+	// Add the legacy input set with the lowest priority
 	aas.at(unSetCount).actionSet = legacyInputsSet;
+	priorities.at(unSetCount).actionSet = legacyInputsSet;
+	priorities.at(unSetCount).priorityOverride = 0;
+
+	XrActiveActionSetPrioritiesEXT prioritiesExt = { XR_TYPE_ACTIVE_ACTION_SET_PRIORITIES_EXT };
+	prioritiesExt.actionSetPriorityCount = priorities.size();
+	prioritiesExt.actionSetPriorities = priorities.data();
 
 	XrActionsSyncInfo syncInfo = { XR_TYPE_ACTIONS_SYNC_INFO };
+	syncInfo.next = &prioritiesExt;
 	syncInfo.activeActionSets = aas.data();
 	syncInfo.countActiveActionSets = aas.size();
+
 	OOVR_FAILED_XR_ABORT(xrSyncActions(xr_session.get(), &syncInfo));
 	syncSerial++;
 
