@@ -827,7 +827,7 @@ void BaseInput::LoadBindingsSet(const InteractionProfile& profile, const std::st
 				}
 
 				if (srcJson["mode"].asString() == "button") {
-				if (inputName == "double") {
+					if (inputName == "double") {
 						LoadDClickAction(profile, importBasePath, action, bindings);
 						continue;
 					}
@@ -840,7 +840,7 @@ void BaseInput::LoadBindingsSet(const InteractionProfile& profile, const std::st
 								action->forcedSubactionPaths.emplace_back(allSubactionPaths[i]);
 						}
 
-					continue;
+						continue;
 					}
 				}
 
@@ -1267,6 +1267,9 @@ EVRInputError BaseInput::UpdateActionState(VR_ARRAY_COUNT(unSetCount) VRActiveAc
 
 void BaseInput::InternalUpdate()
 {
+	// Always increment this once per frame, and only once per frame
+	syncSerialDigital++;
+
 	if (!usingLegacyInput)
 		return;
 
@@ -1305,7 +1308,7 @@ XrResult BaseInput::getBooleanOrDpadData(Action& action, const XrActionStateGetI
 	}
 
 	bool compoundLastState = false;
-	
+
 	// double clicks: check time between clicks and emulate openvr 'double' inputs
 	for (auto& dclick_info : action.dclickBindings) {
 		XrActionStateBoolean click_state = { XR_TYPE_ACTION_STATE_BOOLEAN };
@@ -1464,6 +1467,16 @@ EVRInputError BaseInput::GetDigitalActionData(VRActionHandle_t action, InputDigi
 		pActionData->activeOrigin = activeOriginFromSubaction(act, allSubactionPathNames[i].c_str());
 	}
 
+	if (pActionData->bActive) {
+		if (syncSerialDigital > act->previousSerial) {
+			const float fState = pActionData->bState ? 1.0 : 0.0;
+			act->deltaState.x = fState - act->previousState.x;
+			act->previousState.x = fState;
+			act->previousSerial = syncSerialDigital;
+		}
+		pActionData->bChanged |= act->deltaState.x != 0.0;
+	}
+
 	// Note it's possible we didn't set any output if this action isn't bound to anything, just leave the
 	//  struct at it's default values.
 
@@ -1506,11 +1519,16 @@ EVRInputError BaseInput::GetAnalogActionData(VRActionHandle_t action, InputAnalo
 			pActionData->x = state.currentState;
 			pActionData->y = 0;
 			pActionData->z = 0;
-			pActionData->deltaX = state.currentState - act->previousState.x;
 			pActionData->bActive = state.isActive;
 			pActionData->activeOrigin = activeOriginFromSubaction(act, allSubactionPathNames[i].c_str());
 
-			act->previousState.x = state.currentState;
+			if (syncSerial > act->previousSerial) {
+				act->deltaState.x = state.currentState - act->previousState.x;
+				act->previousState.x = state.currentState;
+				act->previousSerial = syncSerial;
+			}
+
+			pActionData->deltaX = act->deltaState.x;
 			break;
 		}
 		case ActionType::Vector2: {
@@ -1525,13 +1543,19 @@ EVRInputError BaseInput::GetAnalogActionData(VRActionHandle_t action, InputAnalo
 			pActionData->x = state.currentState.x;
 			pActionData->y = state.currentState.y;
 			pActionData->z = 0;
-			pActionData->deltaX = state.currentState.x - act->previousState.x;
-			pActionData->deltaY = state.currentState.y - act->previousState.y;
 			pActionData->bActive = state.isActive;
 			pActionData->activeOrigin = activeOriginFromSubaction(act, allSubactionPathNames[i].c_str());
 
-			act->previousState.x = state.currentState.x;
-			act->previousState.y = state.currentState.y;
+			if (syncSerial > act->previousSerial) {
+				act->deltaState.x = state.currentState.x - act->previousState.x;
+				act->deltaState.y = state.currentState.y - act->previousState.y;
+				act->previousState.x = state.currentState.x;
+				act->previousState.y = state.currentState.y;
+				act->previousSerial = syncSerial;
+			}
+
+			pActionData->deltaX = act->deltaState.x;
+			pActionData->deltaY = act->deltaState.y;
 			break;
 		}
 		case ActionType::Vector3:
