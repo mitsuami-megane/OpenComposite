@@ -1521,14 +1521,6 @@ EVRInputError BaseInput::GetAnalogActionData(VRActionHandle_t action, InputAnalo
 			pActionData->z = 0;
 			pActionData->bActive = state.isActive;
 			pActionData->activeOrigin = activeOriginFromSubaction(act, allSubactionPathNames[i].c_str());
-
-			if (syncSerial > act->previousSerial) {
-				act->deltaState.x = state.currentState - act->previousState.x;
-				act->previousState.x = state.currentState;
-				act->previousSerial = syncSerial;
-			}
-
-			pActionData->deltaX = act->deltaState.x;
 			break;
 		}
 		case ActionType::Vector2: {
@@ -1545,17 +1537,6 @@ EVRInputError BaseInput::GetAnalogActionData(VRActionHandle_t action, InputAnalo
 			pActionData->z = 0;
 			pActionData->bActive = state.isActive;
 			pActionData->activeOrigin = activeOriginFromSubaction(act, allSubactionPathNames[i].c_str());
-
-			if (syncSerial > act->previousSerial) {
-				act->deltaState.x = state.currentState.x - act->previousState.x;
-				act->deltaState.y = state.currentState.y - act->previousState.y;
-				act->previousState.x = state.currentState.x;
-				act->previousState.y = state.currentState.y;
-				act->previousSerial = syncSerial;
-			}
-
-			pActionData->deltaX = act->deltaState.x;
-			pActionData->deltaY = act->deltaState.y;
 			break;
 		}
 		case ActionType::Vector3:
@@ -1566,6 +1547,18 @@ EVRInputError BaseInput::GetAnalogActionData(VRActionHandle_t action, InputAnalo
 			break;
 		}
 	}
+
+	if (pActionData->bActive) {
+		if (syncSerial > act->previousSerial) {
+			act->deltaState.x = pActionData->x - act->previousState.x;
+			act->deltaState.y = pActionData->y - act->previousState.y;
+			act->previousState.x = pActionData->x;
+			act->previousState.y = pActionData->y;
+			act->previousSerial = syncSerial;
+		}
+	}
+	pActionData->deltaX = act->deltaState.x;
+	pActionData->deltaY = act->deltaState.y;
 
 	return VRInputError_None;
 }
